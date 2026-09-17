@@ -1,0 +1,162 @@
+rules_version = '2';
+
+// Scouters – Firestore-tietoturvasäännöt
+// Periaate: kirjautunut käyttäjä näkee muiden julkiset profiilit, mutta
+// kirjoittaa vain omiin dokumentteihinsa. Viestit näkyvät vain matchin
+// osapuolille, ja arvostelun voi jättää vasta valmiiksi merkitystä keikasta.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+    function isOwner(u) { return signedIn() && uid() == u; }
+
+    function validUser(d) {
+      return d.role in ['provider', 'hirer']
+        && d.kind in ['person', 'business', 'company']
+        && d.name is string && d.name.size() <= 80
+        && d.city is string && d.city.size() <= 60
+        && d.about is string && d.about.size() <= 1000
+        && d.cats is list && d.cats.size() <= 9
+        && d.price is number && d.price >= 0 && d.price <= 100000
+        && d.active is bool;
+    }
+
+    function matchDoc(mid) {
+      return get(/databases/$(database)/documents/matches/$(mid)).data;
+    }
+
+    function likeOk(a, b) {
+      return exists(/databases/$(database)/documents/likes/$(a + '_' + b))
+        && get(/databases/$(database)/documents/likes/$(a + '_' + b)).data.dir != 'pass';
+    }
+
+    // ---------- Käyttäjät ja profiilit ----------
+    match /users/{userId} {
+      // Profiilit ovat selattavissa vain kirjautuneille.
+      allow read: if signedIn();
+
+      allow create: if isOwner(userId)
+        && validUser(request.resource.data)
+        && request.resource.data.ratingCount == 0
+        && request.resource.data.ratingAvg == 0;
+
+      // Arvosanoja ei voi muuttaa itse: ne päivittyvät arvostelujen kautta
+      // (Cloud Function, joka ohittaa nämä säännöt).
+      allow update: if isOwner(userId)
+        && validUser(request.resource.data)
+        && request.resource.data.ratingCount == resource.data.ratingCount
+        && request.resource.data.ratingAvg == resource.data.ratingAvg;
+
+      allow delete: if false;
+
+      // Yksityiset tiedot, esim. sähköposti ja puhelin: vain oma pääsy.
+      match /private/{docId} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // ---------- Tykkäykset ----------
+    // Dokumentin id on aina "<tykkääjä>_<kohde>", joten yksi tykkäys per pari.
+    match /likes/{likeId} {
+      allow read: if signedIn()
+        && (resource.data.from == uid() || resource.data.to == uid());
+
+      allow create: if signedIn()
+        && likeId == uid() + '_' + request.resource.data.to
+        && request.resource.data.from == uid()
+        && request.resource.data.to is string
+        && request.resource.data.to != uid()
+        && request.resource.data.dir in ['like', 'super', 'pass'];
+
+      allow update, delete: if false;
+    }
+
+    // ---------- Matchit ja viestit ----------
+    match /matches/{matchId} {
+      allow read: if signedIn() && uid() in resource.data.users;
+
+      // Matchin voi luoda vain, jos molemmat ovat oikeasti tykänneet.
+      allow create: if signedIn()
+        && request.resource.data.users.size() == 2
+        && uid() in request.resource.data.users
+        && request.resource.data.users[0] < request.resource.data.users[1]
+        && matchId == request.resource.data.users[0] + '_' + request.resource.data.users[1]
+        && likeOk(request.resource.data.users[0], request.resource.data.users[1])
+        && likeOk(request.resource.data.users[1], request.resource.data.users[0])
+        && request.resource.data.status == 'active';
+
+      allow update: if signedIn()
+        && uid() in resource.data.users
+        && request.resource.data.users == resource.data.users
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['lastMessage', 'lastAt', 'status', 'completedBy', 'completedAt']);
+
+      allow delete: if false;
+
+      match /messages/{msgId} {
+        allow read: if signedIn() && uid() in matchDoc(matchId).users;
+
+        allow create: if signedIn()
+          && uid() in matchDoc(matchId).users
+          && request.resource.data.from == uid()
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 2000;
+
+        allow update, delete: if false;
+      }
+    }
+
+    // ---------- Keikkailmoitukset ----------
+    match /gigs/{gigId} {
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == uid()
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.desc is string
+        && request.resource.data.desc.size() <= 1500
+        && request.resource.data.open is bool;
+
+      allow update: if signedIn()
+        && resource.data.ownerUid == uid()
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+
+      allow delete: if signedIn() && resource.data.ownerUid == uid();
+    }
+
+    // ---------- Arvostelut ----------
+    // Id on "<matchId>_<arvostelijan uid>". Arvostelun voi jättää vasta, kun
+    // keikka on merkitty valmiiksi, ja se julkaistaan vasta kun molemmat
+    // osapuolet ovat kirjoittaneet omansa.
+    match /reviews/{reviewId} {
+      allow read: if signedIn()
+        && (resource.data.published == true
+            || resource.data.from == uid()
+            || resource.data.to == uid());
+
+      allow create: if signedIn()
+        && request.resource.data.from == uid()
+        && reviewId == request.resource.data.matchId + '_' + uid()
+        && uid() in matchDoc(request.resource.data.matchId).users
+        && matchDoc(request.resource.data.matchId).status == 'completed'
+        && request.resource.data.stars is number
+        && request.resource.data.stars >= 1 && request.resource.data.stars <= 5
+        && request.resource.data.text is string
+        && request.resource.data.text.size() <= 1000
+        && request.resource.data.published == false;
+
+      allow update: if signedIn()
+        && uid() in matchDoc(resource.data.matchId).users
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['published'])
+        && request.resource.data.published == true
+        && exists(/databases/$(database)/documents/reviews/$(resource.data.matchId + '_' + resource.data.from))
+        && exists(/databases/$(database)/documents/reviews/$(resource.data.matchId + '_' + resource.data.to));
+
+      allow delete: if false;
+    }
+  }
+}
