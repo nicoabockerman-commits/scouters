@@ -1,15 +1,24 @@
 // Scouters – sovelluksen runko: kirjautuminen, roolit, selaus, kiinnostuneet,
 // matchit, chat ja profiili. Molemmat osapuolet käyttävät samoja näkymiä.
 import { watchAuth, googleLogin, emailLogin, logOut, authError } from './auth.js';
-import { getProfile, createProfile, saveProfile, uploadMedia } from './db.js';
-import { catOf } from './model.js';
+import {
+  getProfile, createProfile, saveProfile, uploadMedia, reviewsFor,
+  completedMatches, blockUser, unblockUser, reportUser, deleteProfile
+} from './db.js';
+import { catOf, MIN_AGE } from './model.js';
+import { deleteAccount } from './auth.js';
 import { CLOUDINARY } from './firebase.js';
 import { $, esc, av, I, toast, userCard, userSheet, gigSheet } from './ui.js';
 import { viewProfile, previewUser } from './profile.js';
 import { deck, loadDeck, viewBrowse, buildDeck, swipeTop, deckItem } from './browse.js';
 import * as chat from './chat.js';
 
-const S = { user: null, profile: null, screen: 'loading', tab: 'browse', role: null, busy: false };
+const S = {
+  user: null, profile: null, screen: 'loading', tab: 'browse',
+  role: null, kind: null, busy: false,
+  birthYear: '', consent: false,
+  myReviews: [], completedCount: 0
+};
 
 /* ---------------- näkymät ---------------- */
 
@@ -34,6 +43,18 @@ const vRole = () => `<div class="page">
   <button class="btn ghost block mt" data-act="logout">Kirjaudu ulos</button>
 </div>`;
 
+const vConsent = () => `<div class="page">
+  <h1>Vielä pari asiaa</h1>
+  <p class="lead">Scouters on tarkoitettu vähintään ${MIN_AGE}-vuotiaille.</p>
+  <div class="field"><label for="birthYear">Syntymävuosi</label>
+    <input id="birthYear" class="text-in" inputmode="numeric" maxlength="4" placeholder="Esim. 2005" value="${esc(S.birthYear)}"></div>
+  <label class="toggle">Hyväksyn käyttöehdot ja tietosuojaselosteen
+    <input type="checkbox" id="consent" ${S.consent ? 'checked' : ''}></label>
+  <p class="hint">Profiilisi, kuvasi ja videosi näkyvät muille kirjautuneille käyttäjille. Voit poistaa tilisi ja tietosi milloin tahansa Tili-välilehdeltä.</p>
+  <button class="btn primary block mt" data-act="accept">Jatka</button>
+  <button class="btn ghost block mt" data-act="back-role">Takaisin</button>
+</div>`;
+
 const vKind = () => {
   const opts = S.role === 'hirer'
     ? [['person', 'Yksityishenkilö', 'Tarvitsen apua omaan projektiin'], ['business', 'Yritys', 'Pizzeria, kampaamo, ketju tai oma toiminimi']]
@@ -41,7 +62,7 @@ const vKind = () => {
   return `<div class="page">
     <h1>Kuka olet?</h1>
     ${opts.map(([v, t, d]) => `<button class="role-card" data-act="kind" data-v="${v}"><strong>${t}</strong><small>${d}</small></button>`).join('')}
-    <button class="btn ghost block mt" data-act="back-role">Takaisin</button>
+    <button class="btn ghost block mt" data-act="back-consent">Takaisin</button>
   </div>`;
 };
 
@@ -68,6 +89,7 @@ function nav() {
 function view() {
   if (S.screen === 'login') return vLogin();
   if (S.screen === 'role') return vRole();
+  if (S.screen === 'consent') return vConsent();
   if (S.screen === 'kind') return vKind();
   if (S.screen !== 'app') return vLoading();
   if (chat.chat.openId) return chat.viewChat(S);
@@ -111,13 +133,15 @@ async function openDetail(key) {
   const item = deckItem(key);
   if (item) {
     const swiped = `<div class="sheet-actions"><button class="btn ghost" data-act="sheet-swipe" data-v="pass" data-key="${key}">Ohita</button><button class="btn primary" data-act="sheet-swipe" data-v="like" data-key="${key}">Kiinnostaa</button></div>`;
-    $('#layer').innerHTML = `<div class="overlay" data-act="bg">${item.type === 'user' ? userSheet(item.data, swiped) : gigSheet(item.data, swiped)}</div>`;
+    const revs = item.type === 'user' ? await reviewsFor(item.data.uid, 3).catch(() => []) : [];
+    $('#layer').innerHTML = `<div class="overlay" data-act="bg">${item.type === 'user' ? userSheet(item.data, swiped, revs) : gigSheet(item.data, swiped)}</div>`;
     return;
   }
   const uid = key.startsWith('u:') ? key.slice(2) : null;
   if (!uid) return;
   const u = await chat.profileOf(uid); if (!u) return;
-  $('#layer').innerHTML = `<div class="overlay" data-act="bg">${userSheet(u, '<div class="mt"><button class="btn ghost block" data-act="close">Sulje</button></div>')}</div>`;
+  const revs = await reviewsFor(uid, 3).catch(() => []);
+  $('#layer').innerHTML = `<div class="overlay" data-act="bg">${userSheet(u, '<div class="mt"><button class="btn ghost block" data-act="close">Sulje</button></div>', revs)}</div>`;
 }
 
 /* ---------------- tapahtumat ---------------- */
@@ -134,10 +158,22 @@ app.addEventListener('click', async e => {
       case 'email-login': await emailLogin($('#email').value, $('#pw').value, false); break;
       case 'email-signup': await emailLogin($('#email').value, $('#pw').value, true); break;
       case 'logout': chat.closeChat(); await logOut(); break;
-      case 'role': S.role = v; S.screen = 'kind'; render(); break;
+      case 'role': S.role = v; S.screen = 'consent'; render(); break;
       case 'back-role': S.screen = 'role'; render(); break;
+      case 'back-consent': S.screen = 'consent'; render(); break;
+      case 'accept': {
+        const year = parseInt(($('#birthYear') || {}).value, 10);
+        const age = new Date().getFullYear() - year;
+        if (!year || year < 1920 || age < 0) { toast('Tarkista syntymävuosi.'); break; }
+        if (age < MIN_AGE) { toast(`Scouters on tarkoitettu vähintään ${MIN_AGE}-vuotiaille.`); break; }
+        if (!($('#consent') || {}).checked) { toast('Hyväksy käyttöehdot jatkaaksesi.'); break; }
+        S.birthYear = String(year); S.consent = true; S.screen = 'kind'; render(); break;
+      }
       case 'kind':
-        S.profile = await createProfile(S.user.uid, S.role, v, { name: S.user.displayName || '', photoUrl: S.user.photoURL || '' });
+        S.profile = await createProfile(S.user.uid, S.role, v, {
+          name: S.user.displayName || '', photoUrl: S.user.photoURL || '',
+          birthYear: +S.birthYear, consentAt: new Date().toISOString()
+        });
         await enterApp();
         toast('Profiili luotu. Täydennä tiedot Tili-välilehdellä.');
         break;
@@ -145,6 +181,7 @@ app.addEventListener('click', async e => {
         closeLayer(); chat.closeChat(); S.tab = v; render();
         if (v === 'browse') { await loadDeck(S); buildDeck(S, onMatch); }
         if (v === 'interested') { await chat.loadInterested(S.user.uid); render(); }
+        if (v === 'account') { await loadMyReviews(); render(true); }
         break;
       case 'cat': {
         const chips = $('#chips'); deck.chipScroll = chips ? chips.scrollLeft : 0;
@@ -155,7 +192,41 @@ app.addEventListener('click', async e => {
         break;
       }
       case 'reload': deck.loading = true; buildDeck(S, onMatch); await loadDeck(S); buildDeck(S, onMatch); break;
+      case 'side':
+        deck.side = v; deck.loading = true; render();
+        await loadDeck(S); buildDeck(S, onMatch); break;
       case 'swipe': swipeTop(v, S, onMatch); break;
+      case 'star': chat.chat.stars = +v; render(true); break;
+      case 'send-review': await chat.sendReview(S); render(true); break;
+      case 'block': {
+        closeLayer();
+        const uid = t.dataset.uid;
+        S.profile.blocked = await blockUser(S.user.uid, uid, S.profile.blocked || []);
+        chat.closeChat();
+        deck.loading = true; render(); await loadDeck(S); buildDeck(S, onMatch);
+        toast('Käyttäjä estetty. Hän ei näy sinulle eikä sinä hänelle.');
+        break;
+      }
+      case 'unblock': {
+        S.profile.blocked = await unblockUser(S.user.uid, t.dataset.uid, S.profile.blocked || []);
+        render(true); toast('Esto poistettu'); break;
+      }
+      case 'report': {
+        closeLayer();
+        const reason = window.prompt('Kerro lyhyesti, mistä ilmiannat käyttäjän:');
+        if (!reason) break;
+        await reportUser(S.user.uid, t.dataset.uid, reason, chat.chat.openId || '');
+        toast('Ilmianto lähetetty. Käymme sen läpi.');
+        break;
+      }
+      case 'delete-account': {
+        if (!window.confirm('Poistetaanko tilisi ja tietosi? Tätä ei voi perua.')) break;
+        await deleteProfile(S.user.uid);
+        const res = await deleteAccount();
+        if (res === 'relogin') toast('Profiilisi poistettiin. Kirjaudu uudelleen, jos haluat poistaa myös tunnuksen.');
+        chat.closeChat(); S.profile = null; S.screen = 'login'; render();
+        break;
+      }
       case 'detail': await openDetail(t.dataset.key); break;
       case 'sheet-swipe': closeLayer(); swipeTop(v, S, onMatch, t.dataset.key); break;
       case 'close': closeLayer(); break;
@@ -165,6 +236,7 @@ app.addEventListener('click', async e => {
         render(true);
         break;
       case 'open-chat': closeLayer(); chat.openChat(S, t.dataset.id, () => render()); S.tab = 'matches'; render(); break;
+      case 'attach': break;
       case 'close-chat': chat.closeChat(); render(); break;
       case 'send': await chat.send(S); break;
       case 'complete': await chat.markComplete(S); break;
@@ -200,6 +272,9 @@ app.addEventListener('input', e => {
 app.addEventListener('change', async e => {
   const el = e.target;
   if (el.dataset.field === 'remote') { S.profile.remote = el.checked; updateCard(); return; }
+  if (el.id === 'fileIn' && el.files && el.files[0]) {
+    await chat.sendFile(S, el.files[0]); el.value = ''; return;
+  }
   if ((el.id === 'photoIn' || el.id === 'videoIn') && el.files && el.files[0]) {
     const isVideo = el.id === 'videoIn';
     toast(isVideo ? 'Ladataan videota…' : 'Ladataan kuvaa…');
@@ -228,6 +303,16 @@ document.addEventListener('keydown', e => {
 document.addEventListener('scouters:detail', e => openDetail(e.detail));
 
 /* ---------------- käynnistys ---------------- */
+
+async function loadMyReviews() {
+  try {
+    const [revs, done] = await Promise.all([
+      reviewsFor(S.user.uid, 20),
+      completedMatches(S.user.uid)
+    ]);
+    S.myReviews = revs; S.completedCount = done.length;
+  } catch (e) { console.error(e); }
+}
 
 async function enterApp() {
   S.screen = 'app'; S.tab = 'browse';

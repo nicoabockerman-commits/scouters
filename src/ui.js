@@ -24,7 +24,8 @@ export const I = {
   play: '<svg viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z"/></svg>',
   back: '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>',
   send: '<svg viewBox="0 0 24 24"><path d="M3.5 11.5L20.5 4l-6.5 16.5-2.6-6.4z"/></svg>',
-  check: '<svg viewBox="0 0 24 24"><path d="M4 12.5l5 5 11-11"/></svg>'
+  check: '<svg viewBox="0 0 24 24"><path d="M4 12.5l5 5 11-11"/></svg>',
+  clip: '<svg viewBox="0 0 24 24"><path d="M20 11l-8.5 8.5a5 5 0 0 1-7-7L13 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 6"/></svg>'
 };
 export const ic = (name, fill) => I[name].replace('<svg ', `<svg class="ic${fill ? ' fill' : ''}" aria-hidden="true" `);
 
@@ -51,6 +52,19 @@ export const kindLine = u => {
 export const headline = u => u.role === 'provider'
   ? (u.about || 'Osaaja Scoutersissa')
   : (u.need || u.about || 'Etsii tekijää');
+
+export function stars(n) {
+  const full = Math.round(Number(n) || 0);
+  return `<span class="stars" aria-label="${full} / 5 tähteä">${'★'.repeat(full)}${'☆'.repeat(5 - full)}</span>`;
+}
+
+export function reviewList(list, empty = 'Ei vielä arvosteluja.') {
+  if (!list || !list.length) return `<p class="muted" style="margin:8px 0 0">${empty}</p>`;
+  return `<ul class="rlist">${list.map(r => `<li>
+    <div class="rhead">${stars(r.stars)}<span class="muted">${r.fromName ? esc(r.fromName) : ''}</span></div>
+    ${r.text ? `<p>${esc(r.text)}</p>` : ''}
+  </li>`).join('')}</ul>`;
+}
 
 function stamps(likeLabel) {
   return `<span class="stamp like">${likeLabel}</span><span class="stamp nope">Ohita</span>`;
@@ -103,7 +117,7 @@ export function gigCard(g) {
 }
 
 // Yhtä kattava tarkempi näkymä kummallekin osapuolelle.
-export function userSheet(u, actionsHTML) {
+export function userSheet(u, actionsHTML, reviews = []) {
   const c = catOf(u.cats && u.cats[0]);
   const provider = u.role === 'provider';
   const rows = provider
@@ -133,7 +147,13 @@ export function userSheet(u, actionsHTML) {
     ${(u.cats || []).length ? `<h3>${provider ? 'Osaaminen' : 'Mitä etsitään'}</h3><div class="tags">${u.cats.map(id => `<span class="tag">${catOf(id).name}</span>`).join('')}</div>` : ''}
     ${provider && (u.skills || []).length ? `<h3>Taidot</h3><div class="tags">${u.skills.map(s => `<span class="tag">${esc(s)}</span>`).join('')}</div>` : ''}
     ${extra.length ? `<h3>Tiedot</h3><ul class="plist">${extra.map(([k, v]) => `<li><b>${k}:</b> ${esc(v)}</li>`).join('')}</ul>` : ''}
+    <h3>Arvostelut</h3>
+    ${reviewList(reviews)}
     ${actionsHTML || ''}
+    <div class="safety">
+      <button class="link danger" data-act="report" data-uid="${u.uid}">Ilmianna</button>
+      <button class="link danger" data-act="block" data-uid="${u.uid}">Estä käyttäjä</button>
+    </div>
   </div>`;
 }
 

@@ -6,6 +6,7 @@ import { $, esc, userCard, gigCard, toast, I } from './ui.js';
 
 export const deck = {
   items: [],      // { key, type: 'user' | 'gig', data }
+  side: 'other',  // 'other' = vastakkainen puoli, 'same' = oman puolen käyttäjät
   cat: null,      // valittu kategoria tai null
   loading: false,
   chipScroll: 0   // muistetaan kategorialistan vierityskohta
@@ -16,8 +17,8 @@ export async function loadDeck(S) {
   console.log('Scouters: haetaan pakkaa roolille', S.profile.role, 'kategoria', deck.cat);
   try {
     const [users, gigs] = await Promise.all([
-      fetchDeck({ myUid: S.user.uid, myRole: S.profile.role, cat: deck.cat }),
-      fetchGigs({ myRole: S.profile.role, cat: deck.cat })
+      fetchDeck({ myUid: S.user.uid, myRole: S.profile.role, side: deck.side, cat: deck.cat, myBlocked: S.profile.blocked || [] }),
+      fetchGigs({ myRole: S.profile.role, side: deck.side, cat: deck.cat })
     ]);
     const mine = new Set([S.user.uid]);
     const list = [
@@ -34,9 +35,20 @@ export async function loadDeck(S) {
   deck.loading = false;
 }
 
+export function sideLabels(role) {
+  return role === 'provider'
+    ? { other: 'Työntarjoajat', same: 'Muut osaajat' }
+    : { other: 'Osaajat', same: 'Muut työntarjoajat' };
+}
+
 export function viewBrowse(S) {
   const chips = [{ id: null, name: 'Kaikki' }, ...CATS];
+  const lbl = sideLabels(S.profile.role);
   return `<main class="content fixed">
+    <div class="seg" role="group" aria-label="Ketä selataan">
+      <button data-act="side" data-v="other" aria-pressed="${deck.side === 'other'}">${lbl.other}</button>
+      <button data-act="side" data-v="same" aria-pressed="${deck.side === 'same'}">${lbl.same}</button>
+    </div>
     <div class="chips" id="chips" role="toolbar" aria-label="Kategoriat">
       ${chips.map(c => `<button class="chip" data-act="cat" data-v="${c.id || ''}" aria-pressed="${deck.cat === c.id}" style="--c:${c.color || 'var(--brand)'}">${c.id ? '<span class="cdot"></span>' : ''}${c.name}</button>`).join('')}
     </div>
@@ -61,9 +73,7 @@ export function buildDeck(S, onMatch) {
   if (!deck.items.length) {
     el.innerHTML = `<div class="empty">
       <h3>Ei näytettävää juuri nyt</h3>
-      <p>${S.profile.role === 'provider'
-        ? 'Uudet yritykset ja ilmoitukset ilmestyvät tähän heti, kun ne liittyvät mukaan.'
-        : 'Uudet osaajat ilmestyvät tähän heti, kun he liittyvät mukaan.'}</p>
+      <p>Uudet ${sideLabels(S.profile.role)[deck.side].toLowerCase()} ilmestyvät tähän heti, kun he liittyvät mukaan. Kokeile toista välilehteä tai kategoriaa.</p>
       <button class="btn ghost small" data-act="reload">Päivitä</button>
     </div>`;
     if (actions) actions.style.visibility = 'hidden';

@@ -1,55 +1,112 @@
 rules_version = '2';
 
+// Scouters – testiversion tietoturvasäännöt.
+//
+// Jokainen kohta kysyy vain sen, mitä se tarvitsee. Puuttuvia dokumentteja
+// tarkistetaan vain exists()-funktiolla, joka palauttaa false eikä kaadu.
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
     function signedIn() { return request.auth != null; }
     function uid() { return request.auth.uid; }
+    function likeOk(a, b) {
+      return exists(/databases/$(database)/documents/likes/$(a + '_' + b));
+    }
+    function matchUsers(mid) {
+      return get(/databases/$(database)/documents/matches/$(mid)).data.users;
+    }
 
+    // ---------- Profiilit ----------
     match /users/{userId} {
       allow read: if signedIn();
-      allow write: if signedIn() && uid() == userId;
+
+      // Ikäraja 15 vuotta tarkistetaan myös palvelimella.
+      allow create: if signedIn() && uid() == userId
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 80
+        && request.resource.data.birthYear is number
+        && request.time.year() - request.resource.data.birthYear >= 15;
+
+      allow update: if signedIn() && uid() == userId
+        && request.resource.data.birthYear == resource.data.birthYear;
+
+      // Käyttäjä saa poistaa oman tilinsä.
+      allow delete: if signedIn() && uid() == userId;
+
       match /private/{docId} {
         allow read, write: if signedIn() && uid() == userId;
       }
     }
 
+    // ---------- Tykkäykset ----------
     match /likes/{likeId} {
       allow read: if signedIn();
-      allow create, update: if signedIn() && request.resource.data.from == uid();
+      allow create, update: if signedIn()
+        && request.resource.data.from == uid()
+        && request.resource.data.to is string
+        && request.resource.data.to != uid()
+        && request.resource.data.dir in ['like', 'super', 'pass'];
       allow delete: if false;
     }
 
+    // ---------- Matchit ----------
     match /matches/{matchId} {
       allow read: if signedIn();
-      allow create: if signedIn() && uid() in request.resource.data.users;
+
+      // Match syntyy vain, kun molemmat ovat pyyhkäisseet toisensa.
+      allow create: if signedIn()
+        && request.resource.data.users.size() == 2
+        && uid() in request.resource.data.users
+        && likeOk(request.resource.data.users[0], request.resource.data.users[1])
+        && likeOk(request.resource.data.users[1], request.resource.data.users[0]);
+
       allow update: if signedIn() && uid() in resource.data.users;
       allow delete: if false;
 
       match /messages/{msgId} {
-        allow read: if signedIn()
-          && uid() in get(/databases/$(database)/documents/matches/$(matchId)).data.users;
+        allow read: if signedIn() && uid() in matchUsers(matchId);
         allow create: if signedIn()
+          && uid() in matchUsers(matchId)
           && request.resource.data.from == uid()
-          && request.resource.data.text is string
-          && request.resource.data.text.size() > 0
           && request.resource.data.text.size() <= 2000;
         allow update, delete: if false;
       }
     }
 
+    // ---------- Ilmoitukset ----------
     match /gigs/{gigId} {
       allow read: if signedIn();
       allow create: if signedIn() && request.resource.data.ownerUid == uid();
       allow update, delete: if signedIn() && resource.data.ownerUid == uid();
     }
 
+    // ---------- Arvostelut ----------
     match /reviews/{reviewId} {
       allow read: if signedIn();
-      allow create: if signedIn() && request.resource.data.from == uid();
+
+      allow create: if signedIn()
+        && request.resource.data.from == uid()
+        && request.resource.data.stars is number
+        && request.resource.data.stars >= 1
+        && request.resource.data.stars <= 5
+        && request.resource.data.text.size() <= 1000;
+
+      // Julkaisu onnistuu, kun molemmat ovat arvostelleet: kumpikin osapuoli
+      // saa merkitä oman ja vastapuolen arvostelun julkaistuksi.
       allow update: if signedIn()
         && (resource.data.from == uid() || resource.data.to == uid());
+
       allow delete: if false;
+    }
+
+    // ---------- Ilmiannot ----------
+    // Käyttäjä voi lähettää ilmiannon, mutta ei lukea toisten ilmiantoja.
+    // Ylläpito lukee ne Firebase-konsolista.
+    match /reports/{reportId} {
+      allow read: if false;
+      allow create: if signedIn() && request.resource.data.from == uid();
+      allow update, delete: if false;
     }
   }
 }

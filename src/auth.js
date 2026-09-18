@@ -1,7 +1,7 @@
 // Kirjautuminen: Google tai sähköposti ja salasana.
 import {
   GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword,
-  createUserWithEmailAndPassword, signOut, onAuthStateChanged
+  createUserWithEmailAndPassword, signOut, onAuthStateChanged, deleteUser
 } from 'firebase/auth';
 import { auth } from './firebase.js';
 
@@ -18,6 +18,15 @@ export async function emailLogin(email, password, isNew) {
   const fn = isNew ? createUserWithEmailAndPassword : signInWithEmailAndPassword;
   const res = await fn(auth, email.trim(), password);
   return res.user;
+}
+
+// Tunnuksen poisto onnistuu vain tuoreella kirjautumisella. Jos ei onnistu,
+// profiili on jo poistettu ja käyttäjää pyydetään kirjautumaan uudelleen.
+export async function deleteAccount() {
+  const u = auth.currentUser;
+  if (!u) return 'nouser';
+  try { await deleteUser(u); return 'deleted'; }
+  catch (e) { return 'relogin'; }
 }
 
 // Firebase palauttaa englanninkieliset virheet, joten käännetään yleisimmät.

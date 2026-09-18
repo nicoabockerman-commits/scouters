@@ -1,7 +1,12 @@
 // Kiinnostuneet, matchit ja chat. Molemmat osapuolet käyttävät samaa näkymää.
 import { catOf } from './model.js';
-import { whoLikedMe, getProfile, like, watchMatches, watchMessages, sendMessage, completeMatch } from './db.js';
-import { $, esc, av, ic, I, toast, kindLine, moneyLine, where as whereTxt, headline } from './ui.js';
+import {
+  whoLikedMe, getProfile, like, watchMatches, watchMessages, sendMessage, completeMatch,
+  writeReview, myReview, uploadMedia
+} from './db.js';
+import { CLOUDINARY } from './firebase.js';
+import { MAX_UPLOAD_MB } from './model.js';
+import { $, esc, av, ic, I, toast, kindLine, moneyLine, where as whereTxt, headline, stars } from './ui.js';
 
 export const chat = {
   matches: [],
@@ -11,7 +16,11 @@ export const chat = {
   messages: [],
   unsubMatches: null,
   unsubMsgs: null,
-  loading: true
+  loading: true,
+  myReview: null,      // oma arvostelu avoimesta keskustelusta
+  reviewOpen: false,   // arvostelulomake näkyvissä
+  stars: 5,
+  sending: false
 };
 
 export async function profileOf(uid) {
@@ -94,8 +103,9 @@ export function viewMatches(S) {
 
 /* ---------- chat ---------- */
 
-export function openChat(S, matchId, onChange) {
-  chat.openId = matchId; chat.messages = [];
+export async function openChat(S, matchId, onChange) {
+  chat.openId = matchId; chat.messages = []; chat.myReview = null; chat.reviewOpen = false; chat.stars = 5;
+  myReview(matchId, S.user.uid).then(r => { chat.myReview = r; onChange(); }).catch(() => {});
   if (chat.unsubMsgs) chat.unsubMsgs();
   chat.unsubMsgs = watchMessages(matchId, msgs => { chat.messages = msgs; onChange(); });
 }
@@ -116,16 +126,65 @@ export function viewChat(S) {
     </div>
     <main class="content" id="scroller"><div class="thread">
       <span class="sys">Teillä on match. Sopikaa työstä ja aikataulusta.</span>
-      ${chat.messages.map(x => `<div class="bubble ${x.from === S.user.uid ? 'me' : 'them'}"><p>${esc(x.text)}</p></div>`).join('')}
-      ${done ? '<span class="sys">Keikka on merkitty valmiiksi. Arvostelut tulevat seuraavassa vaiheessa.</span>' : ''}
+      ${chat.messages.map(x => msgHTML(x, S)).join('')}
+      ${done ? '<span class="sys">Keikka on merkitty valmiiksi.</span>' : ''}
+      ${done && chat.myReview ? `<span class="sys">Kiitos arvostelusta. Se julkaistaan, kun toinenkin on arvostellut.</span>` : ''}
+      ${done && !chat.myReview ? reviewForm() : ''}
     </div></main>
     <div class="composer-wrap">
       ${done ? '' : `<button class="btn ghost block small mb" data-act="complete">${ic('check')} Merkitse keikka valmiiksi</button>`}
       <form class="composer" onsubmit="return false">
+        <label class="attach" title="Liitä kuva tai PDF">${I.clip}<input type="file" id="fileIn" accept="image/*,application/pdf"></label>
         <input id="chatIn" placeholder="Kirjoita viesti" autocomplete="off" aria-label="Viesti">
-        <button class="send" data-act="send" aria-label="Lähetä">${I.send}</button>
+        <button class="send" data-act="send" aria-label="Lähetä" ${chat.sending ? 'disabled' : ''}>${I.send}</button>
       </form>
+      <p class="fine">Liitteet: kuvat ja PDF, enintään ${MAX_UPLOAD_MB} Mt.</p>
     </div>`;
+}
+
+function msgHTML(x, S) {
+  const mine = x.from === S.user.uid;
+  let media = '';
+  if (x.fileUrl) {
+    media = x.fileType === 'application/pdf'
+      ? `<a class="file-link" href="${esc(x.fileUrl)}" target="_blank" rel="noopener">${esc(x.fileName || 'Liite')}</a>`
+      : `<a href="${esc(x.fileUrl)}" target="_blank" rel="noopener"><img class="msg-img" src="${esc(x.fileUrl)}" alt="Liite"></a>`;
+  }
+  return `<div class="bubble ${mine ? 'me' : 'them'}">${media}${x.text ? `<p>${esc(x.text)}</p>` : ''}</div>`;
+}
+
+function reviewForm() {
+  return `<div class="review-box">
+    <b>Arvostele yhteistyö</b>
+    <div class="star-row">${[1,2,3,4,5].map(n => `<button class="star-btn ${n <= chat.stars ? 'on' : ''}" data-act="star" data-v="${n}" aria-label="${n} tähteä">★</button>`).join('')}</div>
+    <textarea id="reviewText" class="text-in" placeholder="Miten yhteistyö sujui?"></textarea>
+    <button class="btn primary block" data-act="send-review">Lähetä arvostelu</button>
+    <p class="fine">Arvostelut julkaistaan vasta, kun molemmat ovat arvostelleet.</p>
+  </div>`;
+}
+
+export async function sendReview(S) {
+  const m = chat.matches.find(x => x.id === chat.openId); if (!m) return;
+  const to = m.users.find(u => u !== S.user.uid);
+  const text = ($('#reviewText') || {}).value || '';
+  try {
+    await writeReview(chat.openId, S.user.uid, to, chat.stars, text);
+    chat.myReview = { stars: chat.stars, text };
+    toast('Arvostelu tallennettu');
+  } catch (e) { console.error(e); toast('Arvostelu ei tallentunut: ' + ((e && (e.code || e.message)) || '')); }
+}
+
+export async function sendFile(S, file) {
+  if (!file) return;
+  if (file.size > MAX_UPLOAD_MB * 1024 * 1024) { toast(`Tiedosto on liian suuri. Raja on ${MAX_UPLOAD_MB} Mt.`); return; }
+  const ok = file.type.startsWith('image/') || file.type === 'application/pdf';
+  if (!ok) { toast('Vain kuvat ja PDF-tiedostot ovat sallittuja.'); return; }
+  chat.sending = true; toast('Ladataan liitettä…');
+  try {
+    const url = await uploadMedia(file, CLOUDINARY, file.type === 'application/pdf' ? 'raw' : 'image');
+    await sendMessage(chat.openId, S.user.uid, '', { url, type: file.type, name: file.name });
+  } catch (e) { console.error(e); toast('Liitteen lähetys ei onnistunut.'); }
+  chat.sending = false;
 }
 
 export async function send(S) {

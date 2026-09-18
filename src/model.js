@@ -41,6 +41,10 @@ export function emptyProfile(uid, role, kind, seed = {}) {
     // hirer
     industry: '', need: '', size: '',
 
+    birthYear: 0,
+    consentAt: null,
+    blocked: [],
+
     ratingAvg: 0,
     ratingCount: 0,
     active: true,
@@ -48,6 +52,9 @@ export function emptyProfile(uid, role, kind, seed = {}) {
     updatedAt: null
   };
 }
+
+export const MIN_AGE = 15;
+export const MAX_UPLOAD_MB = 10;
 
 // likes/{fromUid_toUid}   { from, to, dir: 'like' | 'super' | 'pass', createdAt }
 // matches/{uidA_uidB}     { users: [a, b], status: 'active' | 'completed',

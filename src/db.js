@@ -1,7 +1,7 @@
 // Kaikki Firestore-kutsut yhdessä paikassa, jotta käyttöliittymä pysyy siistinä.
 import {
-  collection, doc, getDoc, getDocs, setDoc, updateDoc, addDoc, query, where,
-  orderBy, limit, onSnapshot, serverTimestamp, arrayRemove
+  collection, doc, getDoc, getDocs, setDoc, updateDoc, addDoc, deleteDoc, query, where,
+  orderBy, limit, onSnapshot, serverTimestamp
 } from 'firebase/firestore';
 import { db } from './firebase.js';
 import { emptyProfile, matchIdFor, likeIdFor } from './model.js';
@@ -13,9 +13,11 @@ export async function getProfile(uid) {
   return snap.exists() ? snap.data() : null;
 }
 
-export async function createProfile(uid, role, kind, seed) {
+export async function createProfile(uid, role, kind, seed = {}) {
   const data = {
     ...emptyProfile(uid, role, kind, seed),
+    birthYear: seed.birthYear || 0,
+    consentAt: seed.consentAt || null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   };
@@ -36,19 +38,24 @@ export async function saveProfile(uid, patch) {
 /* ---------- selaus ---------- */
 
 // Osaaja selaa tekijää etsiviä ja päinvastoin. Kaikki samassa pakassa.
-export async function fetchDeck({ myUid, myRole, cat = null, max = 40 }) {
-  const wanted = myRole === 'provider' ? 'hirer' : 'provider';
+// side: 'other' = vastakkainen puoli, 'same' = oman puolen käyttäjät.
+export async function fetchDeck({ myUid, myRole, side = 'other', cat = null, myBlocked = [], max = 40 }) {
+  const opposite = myRole === 'provider' ? 'hirer' : 'provider';
+  const wanted = side === 'same' ? myRole : opposite;
   const parts = [where('role', '==', wanted), where('active', '==', true)];
   if (cat) parts.push(where('cats', 'array-contains', cat));
   const q = query(collection(db, 'users'), ...parts, orderBy('updatedAt', 'desc'), limit(max));
   const snap = await getDocs(q);
   const seen = await myLikedIds(myUid);
-  return snap.docs.map(d => d.data()).filter(u => u.uid !== myUid && !seen.has(u.uid));
+  const blocked = new Set(myBlocked || []);
+  return snap.docs.map(d => d.data()).filter(u =>
+    u.uid !== myUid && !seen.has(u.uid) && !blocked.has(u.uid) && !(u.blocked || []).includes(myUid));
 }
 
 // Keikkailmoitukset näkyvät samassa pakassa profiilien kanssa.
-export async function fetchGigs({ myRole, cat = null, max = 30 } = {}) {
-  const wanted = myRole === 'provider' ? 'hirer' : 'provider';
+export async function fetchGigs({ myRole, side = 'other', cat = null, max = 30 } = {}) {
+  const opposite = myRole === 'provider' ? 'hirer' : 'provider';
+  const wanted = side === 'same' ? myRole : opposite;
   const parts = [where('open', '==', true), where('ownerRole', '==', wanted)];
   if (cat) parts.push(where('cat', '==', cat));
   const q = query(collection(db, 'gigs'), ...parts, orderBy('createdAt', 'desc'), limit(max));
@@ -138,14 +145,20 @@ export function watchMessages(matchId, cb) {
   return onSnapshot(q, s => cb(s.docs.map(d => ({ id: d.id, ...d.data() }))));
 }
 
-export async function sendMessage(matchId, myUid, text) {
-  const clean = String(text).trim().slice(0, 2000);
-  if (!clean) return;
+export async function sendMessage(matchId, myUid, text, file = null) {
+  const clean = String(text || '').trim().slice(0, 2000);
+  if (!clean && !file) return;
   await addDoc(collection(db, 'matches', matchId, 'messages'), {
-    from: myUid, text: clean, createdAt: serverTimestamp()
+    from: myUid,
+    text: clean,
+    fileUrl: file ? file.url : '',
+    fileType: file ? file.type : '',
+    fileName: file ? file.name : '',
+    createdAt: serverTimestamp()
   });
   await updateDoc(doc(db, 'matches', matchId), {
-    lastMessage: clean.slice(0, 120), lastAt: serverTimestamp()
+    lastMessage: (clean || (file ? 'Liite: ' + file.name : '')).slice(0, 120),
+    lastAt: serverTimestamp()
   });
 }
 
@@ -173,6 +186,7 @@ async function publishIfBothDone(matchId, a, b) {
   return true;
 }
 
+// Kolme uusinta arvostelua kortille, loput tilille.
 export async function reviewsFor(uid, max = 20) {
   const q = query(collection(db, 'reviews'), where('to', '==', uid),
     where('published', '==', true), orderBy('createdAt', 'desc'), limit(max));
@@ -185,6 +199,42 @@ export async function myReview(matchId, myUid) {
   return snap.exists() ? snap.data() : null;
 }
 
+export async function completedMatches(myUid) {
+  const q = query(collection(db, 'matches'), where('users', 'array-contains', myUid),
+    where('status', '==', 'completed'), limit(50));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+/* ---------- esto, ilmianto ja tilin poisto ---------- */
+
+export async function blockUser(myUid, targetUid, myBlocked = []) {
+  const list = Array.from(new Set([...(myBlocked || []), targetUid])).slice(0, 200);
+  await updateDoc(doc(db, 'users', myUid), { blocked: list, updatedAt: serverTimestamp() });
+  return list;
+}
+
+export async function unblockUser(myUid, targetUid, myBlocked = []) {
+  const list = (myBlocked || []).filter(u => u !== targetUid);
+  await updateDoc(doc(db, 'users', myUid), { blocked: list, updatedAt: serverTimestamp() });
+  return list;
+}
+
+// Ilmiannot menevät omaan kokoelmaansa. Vain ylläpito lukee ne konsolista.
+export async function reportUser(myUid, targetUid, reason, matchId = '') {
+  await addDoc(collection(db, 'reports'), {
+    from: myUid, to: targetUid, matchId,
+    reason: String(reason || '').slice(0, 1000),
+    createdAt: serverTimestamp()
+  });
+}
+
+// Poistaa profiilin tiedot. Viestit jäävät toiselle osapuolelle, mikä
+// kerrotaan käyttäjälle ennen poistoa.
+export async function deleteProfile(myUid) {
+  await deleteDoc(doc(db, 'users', myUid));
+}
+
 /* ---------- Cloudinary ---------- */
 
 export async function uploadMedia(file, { cloudName, preset }, kind = 'image') {
@@ -192,11 +242,10 @@ export async function uploadMedia(file, { cloudName, preset }, kind = 'image') {
   const form = new FormData();
   form.append('file', file);
   form.append('upload_preset', preset);
-  const url = `https://api.cloudinary.com/v1_1/${cloudName}/${kind === 'video' ? 'video' : 'image'}/upload`;
+  const type = kind === 'video' ? 'video' : kind === 'raw' ? 'raw' : 'image';
+  const url = `https://api.cloudinary.com/v1_1/${cloudName}/${type}/upload`;
   const res = await fetch(url, { method: 'POST', body: form });
   if (!res.ok) throw new Error('Lataus epäonnistui');
   const data = await res.json();
   return data.secure_url;
 }
-
-export { arrayRemove };

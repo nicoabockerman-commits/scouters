@@ -16,7 +16,7 @@ const firebaseConfig = {
 // Cloudinary: cloud name ja unsigned upload preset.
 // Täytä cloudName, kun olet luonut Cloudinary-tilin.
 export const CLOUDINARY = {
-  cloudName: 'TAYTA_TAHAN',
+  cloudName: 'dicmfqyhr',
   preset: 'scouters'
 };
 

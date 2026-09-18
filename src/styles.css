@@ -187,3 +187,28 @@ textarea.text-in{min-height:84px;resize:vertical;line-height:1.45}
 .send svg{width:20px;height:20px;fill:#fff}
 .mb{margin-bottom:10px}
 .media-btn .over{position:absolute;left:8px;bottom:8px;background:rgba(0,0,0,.55);color:#fff;font-size:12px;padding:4px 8px;border-radius:999px;z-index:1}
+
+/* ---------- arvostelut, liitteet ja turvatoiminnot ---------- */
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:8px 18px 10px;padding:4px;background:var(--surface);border:1px solid var(--line);border-radius:14px}
+.seg button{border:0;background:none;padding:9px;border-radius:10px;font-weight:700;font-size:14px;color:var(--ink-2)}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--surface)}
+.stars{color:#FF9F1A;letter-spacing:2px}
+.rlist{list-style:none;margin:8px 0 0;padding:0}
+.rlist li{padding:10px 0;border-top:1px solid var(--line)}
+.rhead{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13.5px}
+.rlist p{margin:6px 0 0;font-size:14.5px;line-height:1.45}
+.review-box{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:14px;margin-top:6px}
+.review-box b{font-size:15.5px}
+.star-row{display:flex;gap:6px;margin:10px 0}
+.star-btn{background:none;border:0;font-size:30px;line-height:1;color:var(--line);padding:0}
+.star-btn.on{color:#FF9F1A}
+.review-box textarea{min-height:70px;margin-bottom:10px}
+.attach{position:relative;width:46px;height:46px;border-radius:50%;border:1.5px solid var(--line);display:grid;place-items:center;flex:none;cursor:pointer;background:var(--surface-2)}
+.attach svg{width:20px;height:20px;stroke:var(--ink-2);fill:none;stroke-width:2;stroke-linecap:round}
+.attach input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}
+.msg-img{display:block;max-width:100%;border-radius:12px;margin-bottom:6px}
+.file-link{color:inherit;font-weight:700;text-decoration:underline}
+.safety{display:flex;gap:16px;justify-content:center;margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
+.link.danger{color:#E5484D}
+.btn.danger{color:#E5484D;border-color:#E5484D}
+.fine{font-size:12px;color:var(--ink-2);text-align:center;margin:8px 0 0}

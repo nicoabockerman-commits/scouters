@@ -1,7 +1,7 @@
 // Tili-näkymä. Molemmilla rooleilla yhtä laaja profiili: erot ovat vain
 // kenttien nimissä, eivät siinä kuinka paljon tietoa voi kertoa.
-import { CATS } from './model.js';
-import { esc, userCard } from './ui.js';
+import { CATS, MIN_AGE } from './model.js';
+import { esc, userCard, reviewList, stars } from './ui.js';
 
 export function previewUser(S) {
   const p = S.profile;
@@ -79,9 +79,20 @@ export function viewProfile(S) {
       ${field(S, 'refs', 'Aiemmat yhteistyöt', 'Kenen kanssa olet tehnyt töitä aiemmin?', 'textarea')}
     </section>` : ''}
 
+    <section class="sec"><h2>Arvostelut ja keikat</h2>
+      <p class="desc">Valmiiksi merkityt keikat: <b>${S.completedCount || 0}</b>${S.myReviews && S.myReviews.length ? `, keskiarvo ${stars(S.myReviews.reduce((a, r) => a + r.stars, 0) / S.myReviews.length)}` : ''}</p>
+      ${reviewList(S.myReviews, 'Arvostelut ilmestyvät tähän, kun keikka on merkitty valmiiksi ja molemmat ovat arvostelleet.')}
+    </section>
+
+    ${(S.profile.blocked || []).length ? `<section class="sec"><h2>Estetyt käyttäjät</h2>
+      <ul class="plist">${S.profile.blocked.map(uid => `<li>${esc(uid.slice(0, 8))}… <button class="link" data-act="unblock" data-uid="${uid}">Poista esto</button></li>`).join('')}</ul>
+    </section>` : ''}
+
     <div class="pad">
       <button class="btn primary block" data-act="save" ${S.busy ? 'disabled' : ''}>Tallenna</button>
       <button class="btn ghost block mt" data-act="logout">Kirjaudu ulos</button>
+      <button class="btn ghost block mt danger" data-act="delete-account">Poista tili ja tiedot</button>
+      <p class="hint">Tilin poisto poistaa profiilisi, kuvasi ja videosi. Lähetetyt viestit jäävät keskustelukumppanille.</p>
     </div>
   </main>`;
 }
