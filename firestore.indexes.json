@@ -24,6 +24,16 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "open", "order": "ASCENDING" },
+        { "fieldPath": "ownerRole", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "gigs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "open", "order": "ASCENDING" },
+        { "fieldPath": "ownerRole", "order": "ASCENDING" },
         { "fieldPath": "cat", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]

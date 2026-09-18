@@ -61,10 +61,18 @@ Salaisuudet (Cloudinary API Secret, Firebasen service account, Anthropicin
 API-avain) eivät koskaan tule tähän repoon eivätkä selaimeen. Ne asetetaan
 myöhemmin Cloud Functionsin ympäristömuuttujiin.
 
+## Valmiina (vaihe 2)
+
+- kirjautuminen, roolin valinta ja yhtä laaja profiili molemmille osapuolille
+- selaus ja pyyhkäisy: profiilit ja ilmoitukset samassa pakassa, kategoriasuodatus
+- kiinnostuneet-näkymä molemmille
+- match molemminpuolisesta kiinnostuksesta
+- chat reaaliajassa ja keikan merkitseminen valmiiksi
+
 ## Seuraavat vaiheet
 
-1. Selausnäkymä ja pyyhkäisy (profiilit ja keikat samassa pakassa)
-2. Matchit, chat ja keikan merkitseminen valmiiksi
-3. Arvostelut ja keskiarvon päivitys Cloud Functionilla
-4. Ladattava Scouters-kortti molemmille osapuolille
-5. AI-matchmaker Cloud Functionin kautta
+1. Arvostelut ja keskiarvon päivitys Cloud Functionilla
+2. Ladattava Scouters-kortti ja tarinakuva molemmille osapuolille
+3. Ilmoituksen luonti sovelluksessa
+4. AI-matchmaker Cloud Functionin kautta
+5. Ilmianto, esto, tilin poisto, ikäraja ja tietosuojaseloste ennen julkaisua

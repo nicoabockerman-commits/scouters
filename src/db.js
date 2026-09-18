@@ -47,17 +47,28 @@ export async function fetchDeck({ myUid, myRole, cat = null, max = 40 }) {
 }
 
 // Keikkailmoitukset näkyvät samassa pakassa profiilien kanssa.
-export async function fetchGigs({ cat = null, max = 30 } = {}) {
-  const parts = [where('open', '==', true)];
+export async function fetchGigs({ myRole, cat = null, max = 30 } = {}) {
+  const wanted = myRole === 'provider' ? 'hirer' : 'provider';
+  const parts = [where('open', '==', true), where('ownerRole', '==', wanted)];
   if (cat) parts.push(where('cat', '==', cat));
   const q = query(collection(db, 'gigs'), ...parts, orderBy('createdAt', 'desc'), limit(max));
   const snap = await getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
-export async function createGig(ownerUid, gig) {
+// Ilmoituksen voi jättää kumpi tahansa osapuoli: yritys etsii tekijää,
+// osaaja tarjoaa palvelua. Nimi ja rooli kopioidaan mukaan, jotta kortin
+// piirtäminen ei vaadi erillistä hakua.
+export async function createGig(owner, gig) {
   return addDoc(collection(db, 'gigs'), {
-    ownerUid, open: true, createdAt: serverTimestamp(), tags: [], ...gig
+    ownerUid: owner.uid,
+    ownerName: owner.name || '',
+    ownerRole: owner.role,
+    ownerKind: owner.kind,
+    open: true,
+    tags: [],
+    createdAt: serverTimestamp(),
+    ...gig
   });
 }
 
@@ -71,20 +82,32 @@ async function myLikedIds(myUid) {
 
 // Palauttaa matchin id:n, jos kiinnostus oli molemminpuolista.
 export async function like(myUid, targetUid, dir = 'like') {
+  console.log('Scouters: tallennetaan tykkäys', { myUid, targetUid, dir });
   await setDoc(doc(db, 'likes', likeIdFor(myUid, targetUid)), {
     from: myUid, to: targetUid, dir, createdAt: serverTimestamp()
   });
+  console.log('Scouters: tykkäys tallennettu');
   if (dir === 'pass') return null;
 
   const back = await getDoc(doc(db, 'likes', likeIdFor(targetUid, myUid)));
+  console.log('Scouters: tykkäsikö toinen jo?', back.exists(), back.exists() ? back.data().dir : '-');
   if (!back.exists() || back.data().dir === 'pass') return null;
 
   const id = matchIdFor(myUid, targetUid);
-  const users = [myUid, targetUid].sort();
+  const existing = await getDoc(doc(db, 'matches', id));
+  if (existing.exists()) return id;
+
+  // Luodaan kerran ilman mergeä: säännöt sallivat myöhemmin vain viestikenttien
+  // ja tilan päivityksen, joten koko dokumenttia ei saa kirjoittaa uudelleen.
   await setDoc(doc(db, 'matches', id), {
-    users, status: 'active', lastMessage: '', lastAt: serverTimestamp(),
-    completedBy: '', completedAt: null, createdAt: serverTimestamp()
-  }, { merge: true });
+    users: [myUid, targetUid].sort(),
+    status: 'active',
+    lastMessage: '',
+    lastAt: serverTimestamp(),
+    completedBy: '',
+    completedAt: null,
+    createdAt: serverTimestamp()
+  });
   return id;
 }
 
